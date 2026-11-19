@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Flight - Browser Edition</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;user-select:none}
+  body,html{width:100%;height:100%;overflow:hidden;background:#0b132b;font-family:system-ui,-apple-system,sans-serif;color:#f8fafc}
+  #canvas-container{position:fixed;inset:0;width:100%;height:100%}
+  canvas{display:block;width:100%;height:100%}
+  #start-overlay{position:fixed;inset:0;z-index:50;background:rgba(9,14,28,.75);backdrop-filter:blur(6px);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}
+  #start-overlay h1{font-size:2.6rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#38bdf8;margin-bottom:8px}
+  #start-overlay p{font-size:1rem;color:#cbd5e1;max-width:500px;margin-bottom:24px;line-height:1.5}
+  #start-btn{background:linear-gradient(135deg,#0284c7,#2563eb);color:#fff;border:1px solid rgba(255,255,255,.25);padding:14px 36px;font-size:1.05rem;font-weight:700;letter-spacing:.08em;border-radius:10px;cursor:pointer}
+  .hud-panel{background:rgba(15,23,42,.82);backdrop-filter:blur(8px);border:1px solid rgba(148,163,184,.22);border-radius:12px}
+  #top-bar{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:8px;padding:8px 12px;flex-wrap:wrap;justify-content:center}
+  .pill-btn{background:rgba(30,41,59,.9);color:#e2e8f0;border:1px solid rgba(148,163,184,.3);padding:6px 11px;border-radius:8px;font-size:.76rem;font-weight:700;cursor:pointer}
+  .pill-btn.active{background:#0284c7;color:#fff;border-color:#38bdf8}
+  .pill-btn.warn.active{background:#d97706;border-color:#fbbf24}
+  .pill-btn.danger{border-color:rgba(248,113,113,.4);color:#fecaca}
+  #telemetry-panel{position:fixed;bottom:16px;left:16px;z-index:20;width:240px;padding:14px 16px}
+  .telem-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px}
+  .telem-label{font-size:.7rem;font-weight:700;color:#94a3b8;letter-spacing:.08em}
+  .telem-val{font-size:1.1rem;font-weight:800;font-variant-numeric:tabular-nums;color:#38bdf8}
+  .telem-val.green{color:#34d399}
+  .telem-val.amber{color:#fbbf24}
+  .thr-bar-bg{width:100%;height:8px;background:rgba(30,41,59,.95);border-radius:99px;overflow:hidden;margin-top:4px}
+  .thr-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#38bdf8)}
+  #right-instruments{position:fixed;bottom:16px;right:16px;z-index:20;display:flex;gap:10px}
+  .instrument-box{padding:8px;display:flex;flex-direction:column;align-items:center}
+  .instrument-title{font-size:.66rem;font-weight:700;letter-spacing:.08em;color:#94a3b8;margin-bottom:5px}
+  #pfd-canvas,#map-canvas{border-radius:8px;background:#090d16;border:1px solid rgba(148,163,184,.25)}
+  #yoke-reticle{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;pointer-events:none;z-index:15}
+  #yoke-dot{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:11px;height:11px;border-radius:50%;background:rgba(56,189,248,.85);border:2px solid #fff;pointer-events:none;z-index:16;display:none}
+  #touchdown-banner{position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:30;padding:11px 24px;border-radius:12px;font-weight:800;font-size:1rem;display:none;background:rgba(15,23,42,.92);border:2px solid #34d399;color:#34d399}
+  #controls-strip{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:18;padding:7px 14px;font-size:.72rem;color:#cbd5e1;white-space:nowrap;pointer-events:none}
+  kbd{background:rgba(51,65,85,.9);border:1px solid rgba(148,163,184,.4);border-radius:4px;padding:1px 5px;font-family:monospace;font-weight:700;color:#fff}
+  @media(max-width:960px){#controls-strip{display:none}}
+</style>
+</head>
+<body>
+<div id="canvas-container"></div>
+<div id="start-overlay">
+  <h1>Project Flight</h1>
+  <p>Browser Edition &bull; Fly-By-Wire Physics, Smooth VS &amp; Ground-Effect Flare.<br>Hold <strong>W</strong> for Thrust &bull; Press <strong>A</strong> for Mouse Yoke &bull; <strong>T</strong> for Gyro &bull; <strong>O</strong> to Reset.</p>
+  <button id="start-btn">PRESS ENTER TO START</button>
+</div>
+<div id="top-bar" class="hud-panel">
+  <button class="pill-btn active" id="btn-yoke">[A] YOKE: ON</button>
+  <button class="pill-btn" id="btn-gyro">[T] GYRO: OFF</button>
+  <button class="pill-btn active" id="btn-gear">[G] GEAR: DOWN</button>
+  <button class="pill-btn" id="btn-flaps">[F] FLAPS: 1</button>
+  <button class="pill-btn warn" id="btn-spoilers">[R] SPOILERS: OFF</button>
+  <button class="pill-btn warn" id="btn-brakes">[B] BRAKES: OFF</button>
+  <button class="pill-btn" id="btn-cam">[C] CAM: CHASE</button>
+  <button class="pill-btn danger" id="btn-reset">[O] RESET</button>
+</div>
+<div id="touchdown-banner"></div>
+<svg id="yoke-reticle" viewBox="0 0 36 36">
+  <circle cx="18" cy="18" r="14" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <line x1="18" y1="10" x2="18" y2="26" stroke="rgba(248,113,113,0.75)" stroke-width="1.5"/>
+  <line x1="10" y1="18" x2="26" y2="18" stroke="rgba(248,113,113,0.75)" stroke-width="1.5"/>
+</svg>
+<div id="yoke-dot"></div>
+<div id="telemetry-panel" class="hud-panel">
+  <div class="telem-row"><span class="telem-label">AIRSPEED</span><span class="telem-val" id="val-spd">0 KN</span></div>
+  <div class="telem-row"><span class="telem-label">ALTITUDE</span><span class="telem-val green" id="val-alt">0 FT</span></div>
+  <div class="telem-row"><span class="telem-label">VERTICAL SPD</span><span class="telem-val" id="val-vs">0 FPM</span></div>
+  <div class="telem-row"><span class="telem-label">HEADING</span><span class="telem-val amber" id="val-hdg">360°</span></div>
+  <div class="telem-row" style="margin-top:8px;margin-bottom:2px"><span class="telem-label">THRUST</span><span class="telem-val green" id="val-thr">0%</span></div>
+  <div class="thr-bar-bg"><div class="thr-bar-fill" id="thr-fill"></div></div>
+</div>
+<div id="controls-strip" class="hud-panel">
+  <kbd>W</kbd>/<kbd>S</kbd> Throttle | <kbd>A</kbd> Yoke | <kbd>T</kbd> Gyro | <kbd>Z</kbd>/<kbd>X</kbd> Rudder | <kbd>F</kbd> Flaps | <kbd>R</kbd> Spoilers | <kbd>B</kbd> Brakes | <kbd>C</kbd> Cam | <kbd>O</kbd> Reset
+</div>
+<div id="right-instruments">
+  <div class="hud-panel instrument-box"><div class="instrument-title">PFD HORIZON</div><canvas id="pfd-canvas" width="132" height="132"></canvas></div>
+  <div class="hud-panel instrument-box"><div class="instrument-title">NAV RADAR</div><canvas id="map-canvas" width="132" height="132"></canvas></div>
+</div>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+
+const state={started:false,yokeActive:true,gyroActive:false,gyroX:0,gyroY:0,gyroBaseBeta:null,gyroBaseGamma:null,mouseX:0,mouseY:0,throttle:0,airspeed:0,altitude:0,vs:0,pitch:0,roll:0,heading:0,pos:new THREE.Vector3(0,0,1100),gearDown:true,flaps:1,spoilers:false,brakes:false,onGround:true,camMode:0,orbitYaw:0,orbitPitch:0,isRightDragging:false,touchdownRecorded:false};
+const keys={};
+const airports=[{code:'AP1 INTL',x:0,z:0,length:2800},{code:'AP2 NORTH',x:-3500,z:-9000,length:2600},{code:'AP3 COAST',x:5500,z:-6500,length:2600}];
+
+const container=document.getElementById('canvas-container');
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x7cc4fa);
+scene.fog=new THREE.FogExp2(0x9bd2fc,0.000085);
+
+const camera=new THREE.PerspectiveCamera(60,window.innerWidth/window.innerHeight,0.5,45000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth,window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x3b6e4c,0.95));
+const dirLight=new THREE.DirectionalLight(0xfffbeb,1.35);
+dirLight.position.set(1200,2400,1000);
+scene.add(dirLight);
+
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(90000,90000),new THREE.MeshLambertMaterial({color:0x3f7d4c}));
+ground.rotation.x=-Math.PI/2;ground.position.y=-0.1;scene.add(ground);
+
+airports.forEach(ap=>{
+  const g=new THREE.Group();g.position.set(ap.x,0,ap.z);
+  const rw=new THREE.Mesh(new THREE.PlaneGeometry(64,ap.length),new THREE.MeshLambertMaterial({color:0x1e293b}));
+  rw.rotation.x=-Math.PI/2;rw.position.y=0.05;g.add(rw);
+  const edgeMat=new THREE.MeshBasicMaterial({color:0xf8fafc});
+  [-29,29].forEach(ox=>{const e=new THREE.Mesh(new THREE.PlaneGeometry(1.2,ap.length-40),edgeMat);e.rotation.x=-Math.PI/2;e.position.set(ox,0.08,0);g.add(e);});
+  for(let z=-ap.length/2+120;z<ap.length/2-120;z+=75){const d=new THREE.Mesh(new THREE.PlaneGeometry(1.6,36),edgeMat);d.rotation.x=-Math.PI/2;d.position.set(0,0.08,z);g.add(d);}
+  const term=new THREE.Mesh(new THREE.BoxGeometry(55,18,220),new THREE.MeshLambertMaterial({color:0xe2e8f0}));
+  term.position.set(95,9,120);g.add(term);
+  scene.add(g);
+});
+
+const cloudMat=new THREE.MeshLambertMaterial({color:0xffffff,transparent:true,opacity:0.9});
+for(let i=0;i<80;i++){
+  const c=new THREE.Group();
+  for(let p=0;p<4;p++){
+    const m=new THREE.Mesh(new THREE.DodecahedronGeometry(75,1),cloudMat);
+    m.position.set((p-1.5)*65,(Math.random()-0.5)*20,(Math.random()-0.5)*45);
+    m.scale.set(1.4,0.55,1.1);c.add(m);
+  }
+  c.position.set((Math.random()-0.5)*30000,700+Math.random()*2200,(Math.random()-0.5)*30000);
+  scene.add(c);
+}
+
+const aircraft=new THREE.Group();
+aircraft.rotation.order='YXZ';
+const whiteMat=new THREE.MeshStandardMaterial({color:0xf8fafc,roughness:0.35});
+const blueMat=new THREE.MeshStandardMaterial({color:0x0284c7,roughness:0.4});
+const darkMat=new THREE.MeshStandardMaterial({color:0x1e293b,roughness:0.5});
+const silverMat=new THREE.MeshStandardMaterial({color:0x94a3b8,roughness:0.3,metalness:0.6});
+
+const fuseGeo=new THREE.CylinderGeometry(2.1,2.1,24,24);fuseGeo.rotateX(Math.PI/2);
+const fuselage=new THREE.Mesh(fuseGeo,whiteMat);fuselage.position.y=3.2;aircraft.add(fuselage);
+
+const noseGeo=new THREE.ConeGeometry(2.1,6.2,24);noseGeo.rotateX(-Math.PI/2);
+const nose=new THREE.Mesh(noseGeo,whiteMat);nose.position.set(0,3.2,-15.1);aircraft.add(nose);
+
+const windshield=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.85,2.2),darkMat);
+windshield.position.set(0,3.85,-13.2);windshield.rotation.x=0.28;aircraft.add(windshield);
+
+const tailGeo=new THREE.ConeGeometry(2.1,7.5,24);tailGeo.rotateX(Math.PI/2);
+const tailCone=new THREE.Mesh(tailGeo,whiteMat);tailCone.position.set(0,3.4,15.75);aircraft.add(tailCone);
+
+const vFin=new THREE.Mesh(new THREE.BoxGeometry(0.36,6.4,4.8),blueMat);
+vFin.position.set(0,7.2,16.5);vFin.rotation.x=-0.35;aircraft.add(vFin);
+
+const hStab=new THREE.Mesh(new THREE.BoxGeometry(12.5,0.24,2.6),whiteMat);
+hStab.position.set(0,4.1,16.8);aircraft.add(hStab);
+
+const flapMeshes=[],spoilerMeshes=[];
+[-1,1].forEach(side=>{
+  const wing=new THREE.Mesh(new THREE.BoxGeometry(16.5,0.35,4.2),whiteMat);
+  wing.position.set(side*8.6,2.6,0.6);wing.rotation.y=side*-0.22;wing.rotation.z=side*0.05;aircraft.add(wing);
+  const winglet=new THREE.Mesh(new THREE.BoxGeometry(0.25,2.1,1.2),blueMat);
+  winglet.position.set(side*16.5,3.9,2.4);winglet.rotation.z=side*-0.25;aircraft.add(winglet);
+  const podGeo=new THREE.CylinderGeometry(1.05,0.95,4.2,18);podGeo.rotateX(Math.PI/2);
+  const engine=new THREE.Mesh(podGeo,silverMat);engine.position.set(side*6.2,1.5,-1.2);aircraft.add(engine);
+  const flap=new THREE.Mesh(new THREE.BoxGeometry(9.5,0.16,1.1),silverMat);
+  flap.position.set(side*6.8,2.45,2.6);flap.rotation.y=side*-0.22;aircraft.add(flap);flapMeshes.push(flap);
+  const spoiler=new THREE.Mesh(new THREE.BoxGeometry(7.5,0.14,0.9),blueMat);
+  spoiler.position.set(side*7.2,2.82,1.4);spoiler.rotation.y=side*-0.22;aircraft.add(spoiler);spoilerMeshes.push(spoiler);
+});
+
+const gearGroup=new THREE.Group();
+const noseWheel=new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.45,0.4,12),darkMat);
+noseWheel.rotation.z=Math.PI/2;noseWheel.position.set(0,0.45,-10.5);gearGroup.add(noseWheel);
+[-3.4,3.4].forEach(gx=>{
+  const w=new THREE.Mesh(new THREE.CylinderGeometry(0.65,0.65,0.65,12),darkMat);
+  w.rotation.z=Math.PI/2;w.position.set(gx,0.65,1.2);gearGroup.add(w);
+});
+aircraft.add(gearGroup);
+scene.add(aircraft);
+
+const startOverlay=document.getElementById('start-overlay');
+const yokeDot=document.getElementById('yoke-dot');
+const tdBanner=document.getElementById('touchdown-banner');
+const pfdCtx=document.getElementById('pfd-canvas').getContext('2d');
+const mapCtx=document.getElementById('map-canvas').getContext('2d');
+
+function startSim(){state.started=true;startOverlay.style.display='none';window.focus();}
+document.getElementById('start-btn').addEventListener('click',e=>{e.target.blur();startSim();});
+
+function handleOrientation(e){
+  if(!state.gyroActive||e.beta===null||e.gamma===null)return;
+  if(state.gyroBaseBeta===null){state.gyroBaseBeta=e.beta;state.gyroBaseGamma=e.gamma;}
+  const isLandscape=window.innerWidth>window.innerHeight;
+  let dPitch,dRoll;
+  if(isLandscape){
+    dPitch=-(e.gamma-state.gyroBaseGamma);
+    dRoll=(e.beta-state.gyroBaseBeta);
+    if(screen.orientation&&screen.orientation.angle===270){dPitch=-dPitch;dRoll=-dRoll;}
+  }else{
+    dPitch=(e.beta-state.gyroBaseBeta);
+    dRoll=(e.gamma-state.gyroBaseGamma);
+  }
+  state.gyroY=Math.max(-1,Math.min(1,dPitch/28));
+  state.gyroX=Math.max(-1,Math.min(1,dRoll/32));
+  yokeDot.style.left=(window.innerWidth/2+state.gyroX*(window.innerWidth*0.35))+'px';
+  yokeDot.style.top=(window.innerHeight/2+state.gyroY*(window.innerHeight*0.35))+'px';
+}
+
+async function toggleGyro(){
+  if(!state.gyroActive){
+    if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
+      try{
+        const perm=await DeviceOrientationEvent.requestPermission();
+        if(perm!=='granted'){alert('Gyroscope permission denied.');return;}
+      }catch(err){console.error(err);return;}
+    }
+    state.gyroActive=true;
+    state.yokeActive=false;
+    state.gyroBaseBeta=null;
+    state.gyroBaseGamma=null;
+    state.gyroX=0;state.gyroY=0;
+    window.addEventListener('deviceorientation',handleOrientation);
+  }else{
+    state.gyroActive=false;
+    state.gyroX=0;state.gyroY=0;
+    window.removeEventListener('deviceorientation',handleOrientation);
+  }
+  syncButtons();
+}
+
+function resetToRunway(){
+  Object.assign(state,{throttle:0,airspeed:0,altitude:0,vs:0,pitch:0,roll:0,heading:0,gearDown:true,flaps:1,spoilers:false,brakes:false,onGround:true,orbitYaw:0,orbitPitch:0,touchdownRecorded:false,gyroBaseBeta:null,gyroBaseGamma:null});
+  state.pos.set(0,0,1100);tdBanner.style.display='none';syncButtons();
+}
+
+function syncButtons(){
+  const by=document.getElementById('btn-yoke');by.textContent=`[A] YOKE: ${state.yokeActive?'ON':'OFF'}`;by.classList.toggle('active',state.yokeActive);
+  const bgy=document.getElementById('btn-gyro');bgy.textContent=`[T] GYRO: ${state.gyroActive?'ON':'OFF'}`;bgy.classList.toggle('active',state.gyroActive);
+  yokeDot.style.display=(state.yokeActive||state.gyroActive)?'block':'none';
+  const bg=document.getElementById('btn-gear');bg.textContent=`[G] GEAR: ${state.gearDown?'DOWN':'UP'}`;bg.classList.toggle('active',state.gearDown);
+  const bf=document.getElementById('btn-flaps');bf.textContent=`[F] FLAPS: ${state.flaps}`;bf.classList.toggle('active',state.flaps>0);
+  const bs=document.getElementById('btn-spoilers');bs.textContent=`[R] SPOILERS: ${state.spoilers?'ON':'OFF'}`;bs.classList.toggle('active',state.spoilers);
+  const bb=document.getElementById('btn-brakes');bb.textContent=`[B] BRAKES: ${state.brakes?'ON':'OFF'}`;bb.classList.toggle('active',state.brakes);
+  document.getElementById('btn-cam').textContent=`[C] CAM: ${['CHASE','COCKPIT','WING'][state.camMode]}`;
+}
+
+document.getElementById('btn-yoke').addEventListener('click',e=>{e.target.blur();state.yokeActive=!state.yokeActive;if(state.yokeActive&&state.gyroActive){state.gyroActive=false;window.removeEventListener('deviceorientation',handleOrientation);}syncButtons();});
+document.getElementById('btn-gyro').addEventListener('click',e=>{e.target.blur();toggleGyro();});
+document.getElementById('btn-gear').addEventListener('click',e=>{e.target.blur();state.gearDown=!state.gearDown;syncButtons();});
+document.getElementById('btn-flaps').addEventListener('click',e=>{e.target.blur();state.flaps=(state.flaps+1)%3;syncButtons();});
+document.getElementById('btn-spoilers').addEventListener('click',e=>{e.target.blur();state.spoilers=!state.spoilers;syncButtons();});
+document.getElementById('btn-brakes').addEventListener('click',e=>{e.target.blur();state.brakes=!state.brakes;syncButtons();});
+document.getElementById('btn-cam').addEventListener('click',e=>{e.target.blur();state.camMode=(state.camMode+1)%3;syncButtons();});
+document.getElementById('btn-reset').addEventListener('click',e=>{e.target.blur();resetToRunway();});
+
+window.addEventListener('keydown',e=>{
+  const c=e.code;
+  if(!state.started&&(c==='Enter'||c==='Space')){e.preventDefault();startSim();return;}
+  if(['KeyW','KeyS','KeyA','KeyT','KeyZ','KeyX','KeyG','KeyF','KeyR','KeyB','KeyC','KeyO'].includes(c))e.preventDefault();
+  if(!keys[c]){
+    if(c==='KeyA'){state.yokeActive=!state.yokeActive;if(state.yokeActive&&state.gyroActive){state.gyroActive=false;window.removeEventListener('deviceorientation',handleOrientation);}syncButtons();}
+    if(c==='KeyT')toggleGyro();
+    if(c==='KeyG'){state.gearDown=!state.gearDown;syncButtons();}
+    if(c==='KeyF'){state.flaps=(state.flaps+1)%3;syncButtons();}
+    if(c==='KeyR'){state.spoilers=!state.spoilers;syncButtons();}
+    if(c==='KeyC'){state.camMode=(state.camMode+1)%3;syncButtons();}
+    if(c==='KeyO')resetToRunway();
+  }
+  keys[c]=true;
+  if(c==='KeyB'){state.brakes=true;syncButtons();}
+},{passive:false});
+
+window.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='KeyB'){state.brakes=false;syncButtons();}});
+window.addEventListener('mousemove',e=>{
+  if(state.isRightDragging){state.orbitYaw-=e.movementX*0.005;state.orbitPitch=Math.max(-0.4,Math.min(0.8,state.orbitPitch+e.movementY*0.004));return;}
+  if(state.gyroActive)return;
+  state.mouseX=Math.max(-1,Math.min(1,(e.clientX/window.innerWidth)*2-1));
+  state.mouseY=Math.max(-1,Math.min(1,(e.clientY/window.innerHeight)*2-1));
+  yokeDot.style.left=e.clientX+'px';yokeDot.style.top=e.clientY+'px';
+});
+window.addEventListener('mousedown',e=>{if(e.button===2)state.isRightDragging=true;});
+window.addEventListener('mouseup',e=>{if(e.button===2)state.isRightDragging=false;});
+window.addEventListener('contextmenu',e=>e.preventDefault());
+window.addEventListener('resize',()=>{camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();renderer.setSize(window.innerWidth,window.innerHeight);});
+
+function drawPFD(){
+  const w=132,h=132;pfdCtx.save();pfdCtx.clearRect(0,0,w,h);pfdCtx.translate(w/2,h/2);pfdCtx.rotate(-state.roll);
+  const po=(state.pitch*180/Math.PI)*2.4;
+  pfdCtx.fillStyle='#0284c7';pfdCtx.fillRect(-w,-h*2+po,w*2,h*2);
+  pfdCtx.fillStyle='#78350f';pfdCtx.fillRect(-w,po,w*2,h*2);
+  pfdCtx.strokeStyle='#fff';pfdCtx.lineWidth=2;pfdCtx.beginPath();pfdCtx.moveTo(-w,po);pfdCtx.lineTo(w,po);pfdCtx.stroke();
+  pfdCtx.restore();
+  pfdCtx.strokeStyle='#fbbf24';pfdCtx.lineWidth=2.5;pfdCtx.beginPath();
+  pfdCtx.moveTo(w/2-26,h/2);pfdCtx.lineTo(w/2-10,h/2);pfdCtx.lineTo(w/2-10,h/2+6);
+  pfdCtx.moveTo(w/2+26,h/2);pfdCtx.lineTo(w/2+10,h/2);pfdCtx.lineTo(w/2+10,h/2+6);pfdCtx.stroke();
+}
+
+function drawMiniMap(){
+  const w=132,h=132,scale=0.0045;mapCtx.clearRect(0,0,w,h);mapCtx.save();mapCtx.translate(w/2,h/2);
+  airports.forEach(ap=>{
+    const dx=(ap.x-state.pos.x)*scale,dz=(ap.z-state.pos.z)*scale;
+    mapCtx.fillStyle='#38bdf8';mapCtx.fillRect(dx-2,dz-8,4,16);
+    mapCtx.fillStyle='#cbd5e1';mapCtx.font='bold 8px sans-serif';mapCtx.fillText(ap.code.split(' ')[0],dx+5,dz+3);
+  });
+  mapCtx.rotate(-state.heading);
+  mapCtx.fillStyle='#34d399';mapCtx.beginPath();mapCtx.moveTo(0,-7);mapCtx.lineTo(-5,6);mapCtx.lineTo(5,6);mapCtx.closePath();mapCtx.fill();
+  mapCtx.restore();
+}
+
+let lastTime=performance.now();
+function animate(now){
+  requestAnimationFrame(animate);
+  const dt=Math.min((now-lastTime)/1000,0.05);lastTime=now;
+
+  if(keys['KeyW'])state.throttle=Math.min(1,state.throttle+0.48*dt);
+  if(keys['KeyS'])state.throttle=Math.max(state.onGround?-0.35:0,state.throttle-0.55*dt);
+
+  const targetSpd=Math.max(0,state.throttle*275);
+  let accel=state.throttle>=0?18.5:34.0;
+  if(state.spoilers)accel+=14.0;
+  if(state.onGround&&state.brakes)accel+=36.0;
+  if(state.onGround&&state.throttle<=0.02&&!keys['KeyW'])accel+=6.5;
+  state.airspeed=state.airspeed<targetSpd?Math.min(targetSpd,state.airspeed+accel*dt*1.35):Math.max(0,state.airspeed-accel*dt);
+
+  let rawPitch=0,rawRoll=0;
+  if((state.yokeActive||state.gyroActive)&&state.started){
+    const inX=state.gyroActive?state.gyroX:state.mouseX;
+    const inY=state.gyroActive?state.gyroY:state.mouseY;
+    const dz=0.06;
+    const ay=Math.abs(inY)>dz?(Math.abs(inY)-dz)/(1-dz):0;
+    const ax=Math.abs(inX)>dz?(Math.abs(inX)-dz)/(1-dz):0;
+    rawPitch=-Math.sign(inY)*Math.pow(ay,1.45);
+    rawRoll=Math.sign(inX)*Math.pow(ax,1.45);
+  }
+  const rudder=(keys['KeyZ']?1:0)-(keys['KeyX']?1:0);
+
+  if(state.onGround){
+    state.roll=THREE.MathUtils.lerp(state.roll,0,8*dt);
+    const rotAuth=Math.max(0,(state.airspeed-120)/30);
+    state.pitch=THREE.MathUtils.lerp(state.pitch,rawPitch>0?rawPitch*0.24*rotAuth:0,3.2*dt);
+    state.heading+=rudder*Math.min(1,state.airspeed/25)*0.75*dt;
+  }else{
+    state.pitch=THREE.MathUtils.lerp(state.pitch,rawPitch*THREE.MathUtils.degToRad(22),2.2*dt);
+    state.roll=THREE.MathUtils.lerp(state.roll,rawRoll*THREE.MathUtils.degToRad(42),2.8*dt);
+    state.heading+=(-Math.sin(state.roll)*0.42+rudder*0.18)*dt;
+  }
+
+  const liftSpeed=state.airspeed+state.flaps*14;
+  const fpa=state.pitch-(liftSpeed<135?(135-liftSpeed)*0.0022:0);
+  let targetFpm=state.airspeed*101.27*Math.sin(fpa);
+  if(!state.onGround&&state.altitude<85&&targetFpm<0)targetFpm*=(0.45+0.55*(state.altitude/85));
+  if(state.onGround&&targetFpm<0)targetFpm=0;
+  state.vs=THREE.MathUtils.lerp(state.vs,targetFpm,3.4*dt);
+
+  const mps=state.airspeed*0.514444;
+  state.pos.x+=-Math.sin(state.heading)*Math.cos(state.pitch)*mps*dt;
+  state.pos.z+=-Math.cos(state.heading)*Math.cos(state.pitch)*mps*dt;
+  state.altitude+=(state.vs/60)*dt;
+
+  if(state.altitude<=0){
+    if(!state.onGround&&!state.touchdownRecorded){
+      const fpm=Math.round(state.vs);state.touchdownRecorded=true;
+      let label='SMOOTH LANDING',color='#38bdf8';
+      if(fpm>=-125){label='BUTTER!';color='#34d399';}
+      else if(fpm<-450){label='HARD LANDING';color='#f87171';}
+      else if(fpm<-260){label='FIRM LANDING';color='#fbbf24';}
+      tdBanner.style.borderColor=color;tdBanner.style.color=color;
+      tdBanner.textContent=`TOUCHDOWN: ${fpm} FPM — ${label}`;tdBanner.style.display='block';
+    }
+    state.altitude=0;state.onGround=true;
+    if(state.vs<0)state.vs=THREE.MathUtils.lerp(state.vs,0,10*dt);
+  }else{
+    state.onGround=false;
+    if(state.altitude>25)state.touchdownRecorded=false;
+  }
+
+  aircraft.position.set(state.pos.x,state.altitude*0.3048,state.pos.z);
+  aircraft.rotation.set(state.pitch,state.heading,-state.roll);
+  gearGroup.visible=state.gearDown;
+  flapMeshes.forEach(f=>{f.rotation.x=state.flaps*0.18;});
+  spoilerMeshes.forEach(s=>{s.rotation.x=state.spoilers?-0.45:0;});
+
+  if(state.camMode===0){
+    const cy=state.heading+state.orbitYaw;
+    camera.position.set(aircraft.position.x+Math.sin(cy)*36,Math.max(1.8,aircraft.position.y+8.5+state.orbitPitch*22),aircraft.position.z+Math.cos(cy)*36);
+    camera.lookAt(aircraft.position.x-Math.sin(state.heading)*20,aircraft.position.y+3.2,aircraft.position.z-Math.cos(state.heading)*20);
+  }else if(state.camMode===1){
+    camera.position.copy(new THREE.Vector3(0,4.3,-12.6).applyEuler(aircraft.rotation).add(aircraft.position));
+    camera.lookAt(new THREE.Vector3(0,3.8,-60).applyEuler(aircraft.rotation).add(aircraft.position));
+  }else{
+    camera.position.copy(new THREE.Vector3(-4.2,3.8,3.5).applyEuler(aircraft.rotation).add(aircraft.position));
+    camera.lookAt(new THREE.Vector3(-14,2.2,-25).applyEuler(aircraft.rotation).add(aircraft.position));
+  }
+
+  document.getElementById('val-spd').textContent=`${Math.round(state.airspeed)} KN`;
+  document.getElementById('val-alt').textContent=`${Math.round(state.altitude)} FT`;
+  const dvs=Math.round(state.vs/10)*10;
+  document.getElementById('val-vs').textContent=`${dvs>0?'+':''}${dvs} FPM`;
+  let hdg=Math.round((-state.heading*180/Math.PI)%360);if(hdg<=0)hdg+=360;
+  document.getElementById('val-hdg').textContent=`${String(hdg).padStart(3,'0')}°`;
+  const tp=Math.round(state.throttle*100);
+  document.getElementById('val-thr').textContent=tp<0?`REV ${Math.abs(tp)}%`:`${tp}%`;
+  document.getElementById('thr-fill').style.width=`${Math.max(0,tp)}%`;
+
+  drawPFD();drawMiniMap();renderer.render(scene,camera);
+}
+syncButtons();requestAnimationFrame(animate);
+</script>
+</body>
+</html>
